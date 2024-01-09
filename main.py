@@ -1,3 +1,4 @@
+import sys
 import mysql.connector
 from decimal import Decimal, InvalidOperation
 import hashlib
@@ -93,6 +94,7 @@ class User:
 
             except mysql.connector.Error as e:
                 print(f"Error during account deletion: {e}")
+                sys.exit()
         else:
             print("Account deletion cancelled.")
 
@@ -162,6 +164,7 @@ class Order:
     @classmethod
     def print_all_orders_by_user(cls):
         for order_id, order_details in cls.orders.items():
+            print()
             print(f"Order ID: {order_id}, Amount: {order_details['amount']}")
             payment = order_details['payment_details']
             print(
@@ -258,7 +261,7 @@ class Payment:
     def fetch_payments_by_user(self, db_connection, user_id):
         self.payment_details.clear()
         query = """
-            SELECT Payments.payment_id, Payments.status, Payments.payment_form, Payments.date 
+            SELECT DISTINCT Payments.payment_id, Payments.status, Payments.payment_form, Payments.date 
             FROM Payments 
             JOIN Orders ON Payments.payment_id = Orders.payment_id 
             WHERE Orders.user_id = %s
@@ -280,13 +283,7 @@ class Payment:
             print(detail)
 
     def insert_new_payment(self, db_connection):
-        while True:
-            status = input("Enter payment form (paid, unpaid, cancelled): ").lower()
-            if status in ["paid", "unpaid", "cancelled"]:
-                self.status = status
-                break
-            else:
-                print("Invalid input. Please enter paid, unpaid, or cancelled.")
+        self.status = "unpaid"
 
         while True:
             payment_form = input("Enter payment form (card, blik, transfer): ").lower()
@@ -300,7 +297,10 @@ class Payment:
             "INSERT INTO Payments (status, payment_form, date) VALUES (%s, %s, %s)",
             (self.status, self.payment_form, self.payment_date))
         db_connection.conn.commit()
-        self.payment_id = db_connection.cursor.lastrowid  # Assuming auto-increment ID
+        self.payment_id = db_connection.cursor.lastrowid
+        print("The payment form has been added to the database and will be visible to the user after finalizing the "
+              "basket.")
+        return self.payment_id
 
     def select_saved_payment_details(self, payment_id):
         found_payment = None
@@ -314,10 +314,10 @@ class Payment:
             self.status = found_payment['status']
             self.payment_form = found_payment['payment_form']
             self.payment_date = found_payment['payment_date']
-            return found_payment  # Return the selected payment details dictionary
+            return payment_id
         else:
             print("Payment details not found.")
-            return None  # Return None to indicate that the payment details were not found
+            return None
 
     def menu(self, db_connection, user_id):
         while True:
@@ -332,7 +332,8 @@ class Payment:
             if choice == '1':
                 self.print_payment_details()
             elif choice == '2':
-                self.insert_new_payment(db_connection)
+                payment_id = self.insert_new_payment(db_connection)
+                return payment_id
             elif choice == '3':
                 payment_id = input("Enter payment ID: ")
                 selected_payment = self.select_saved_payment_details(payment_id)
@@ -348,6 +349,8 @@ class Payment:
 
 
 class Delivery:
+    _delivery_details = []
+
     def __init__(self):
         self.delivery_id = None
         self.city = None
@@ -355,75 +358,65 @@ class Delivery:
         self.number = None
         self.postal_code = None
         self.country = None
-        self.delivery_details = []
+        Delivery._delivery_details.append(self)
 
-    @staticmethod
-    def fetch_deliveries_by_user(self, db_connection, user_id):
-        self.delivery_details.clear()
+    @classmethod
+    def fetch_deliveries_by_user(cls, db_connection, user_id):
+        cls._delivery_details.clear()
         query = """
-                SELECT Delivery.delivery_id, Delivery.city, Delivery.street, Delivery.number, Delivery.postal_code,
+                SELECT DISTINCT Delivery.delivery_id, Delivery.city, Delivery.street, Delivery.number, Delivery.postal_code,
                  Delivery.country FROM Delivery JOIN Orders ON Delivery.delivery_id = Orders.delivery_id
                 WHERE Orders.user_id = %s
             """
+
         db_connection.cursor.execute(query, (user_id,))
-        deliveries = db_connection.cursor.fetchall()
+        rows = db_connection.cursor.fetchall()
+        for row in rows:
+            delivery = cls()
+            delivery.delivery_id, delivery.city, delivery.street, delivery.number, delivery.postal_code, delivery.country = row
 
-        for delivery in deliveries:
-            delivery_detail = {
-                'delivery_id': delivery[0],
-                'city': delivery[1],
-                'street': delivery[2],
-                'number': delivery[3],
-                'postal_code': delivery[4],
-                'country': delivery[5]
-            }
-            self.delivery_details.append(delivery_detail)
-
-    def print_delivery_details(self):
-        for deliver in self.delivery_details:
-            print(deliver)
+    @classmethod
+    def print_delivery_details(cls):
+        for delivery in cls._delivery_details:
+            print(f"Delivery ID: {delivery.delivery_id}, City: {delivery.city}, Street: {delivery.street}, "
+                  f"Number: {delivery.number}, Postal Code: {delivery.postal_code}, Country: {delivery.country}")
 
     def insert_new_delivery(self, db_connection):
-        self.city = input("Enter city: ")
-        ValidationUtility.get_validated_input_varchar("Enter new email (or press Enter to skip): ", 100)
-        self.street = input("Enter street: ")
-        ValidationUtility.get_validated_input_varchar("Enter new email (or press Enter to skip): ", 100)
 
+        print("New order will be created with this delivery details")
+        self.city = ValidationUtility.get_validated_input_varchar("Enter city: ", 100)
+        self.street = ValidationUtility.get_validated_input_varchar("Enter street: ", 100)
         self.number = ValidationUtility.get_validated_input_integer("Enter number: ", 10)
         self.postal_code = ValidationUtility.get_validated_input_integer("Enter postal code: ", 15)
-
-        self.country = input("Enter country: ")
+        self.country = ValidationUtility.get_validated_input_varchar("Enter country: ", 100)
 
         try:
             db_connection.cursor.execute(
                 "INSERT INTO Delivery (city, street, number, postal_code, country) VALUES (%s, %s, %s, %s, %s)",
                 (self.city, self.street, self.number, self.postal_code, self.country))
             db_connection.conn.commit()
-            self.delivery_id = db_connection.cursor.lastrowid  # Assuming auto-increment ID
+            self.delivery_id = db_connection.cursor.lastrowid
         except mysql.connector.Error as e:
             print(f"Error in database operation: {e}")
         finally:
-            print("The record has been added to the database.")
+            print("The delivery details has been added to the database and will be visible to the user "
+                  "after finalizing the basket.")
+            return self.delivery_id
 
-    def select_saved_delivery_details(self, delivery_id):
-        found_delivery = None
-
-        for delivery_detail in self.delivery_details:
-            if delivery_detail['delivery_id'] == delivery_id:
-                found_delivery = delivery_detail
-                break
-
-        if found_delivery:
-            self.city = found_delivery['city']
-            self.street = found_delivery['street']
-            self.number = found_delivery['number']
-            self.postal_code = found_delivery['postal_code']
-            self.country = found_delivery['country']
-
-            return found_delivery
-        else:
-            print("Delivery details not found.")
+    @classmethod
+    def select_delivery(cls):
+        cls.print_delivery_details()
+        try:
+            selected_id = int(input("Enter the ID of the delivery you want to select: "))
+        except ValueError:
+            print("Invalid input. Please enter a numeric ID.")
             return None
+
+        for delivery in cls._delivery_details:
+            if delivery.delivery_id == selected_id:
+                return selected_id
+        print("No delivery found with the provided ID.")
+        return None
 
     def menu(self, db_connection, user_id):
         while True:
@@ -432,14 +425,13 @@ class Delivery:
             print("2. Select Saved Delivery Details")
             print("3. Insert New Delivery")
             print("4. Exit")
-            self.fetch_deliveries_by_user(self, db_connection, user_id)
+            self.fetch_deliveries_by_user(db_connection, user_id)
             choice = input("Enter your choice: ")
 
             if choice == "1":
                 self.print_delivery_details()
             elif choice == "2":
-                delivery_id = input("Enter delivery ID: ")
-                selected_delivery = self.select_saved_delivery_details(delivery_id)
+                selected_delivery = self.select_delivery()
                 if selected_delivery:
                     print("Selected delivery details:")
                     print(selected_delivery)
@@ -455,11 +447,12 @@ class Delivery:
 class Basket:
 
     def __init__(self, db_connection, user_id, order_id=None):
-        # Assign order_id if provided, else assign a new one
+
         self.db_connection = db_connection
-        self.db_connection.cursor.callproc("addDefaultOrder", (user_id,))
+        db_connection.cursor.callproc("addDefaultOrder", [user_id, 0])
         self.db_connection.conn.commit()
-        self.order_id = self.db_connection.cursor.lastrowid
+        db_connection.cursor.execute("SELECT MAX(order_id) FROM Orders")
+        self.order_id = db_connection.cursor.fetchone()[0]
         self.calculated_price = None
 
     def assign_order_id(self):
@@ -471,13 +464,12 @@ class Basket:
         return latest_order_id + 1
 
     def add_clothes(self, clothes_id: int):
-        # Insert query into basket table with selected clothes_id
+        print(f"order_id {self.order_id}")
         query = "INSERT INTO Basket (order_id, clothes_id) VALUES (%s, %s)"
         self.db_connection.cursor.execute(query, (self.order_id, clothes_id))
         self.db_connection.conn.commit()
 
     def calculate_price(self):
-        # Calculate the total price of clothes in the basket
 
         query = """
             SELECT SUM(Clothes.price) 
@@ -529,22 +521,9 @@ class Basket:
             else:
                 print("Invalid choice. Please try again.")
 
-    """
-    def finalize_basket(self):
-        # Confirm payment and finalize the order
-        print(f"Total price: {self.calculated_price}")
-        confirmation = input("Do you confirm to pay? (yes/no): ")
-        if confirmation.lower() == 'yes':
-            # Finalize the order logic here
-            # Implement order finalization query
-            print("Order finalized successfully.")
-        else:
-            print("Order not finalized.")
-    """
-
 
 class Clothes:
-    _all_clothes = []  # Private class variable to hold all clothes
+    _all_clothes = []
 
     def __init__(self):
         self.clothes_id = None
@@ -553,14 +532,18 @@ class Clothes:
         self.sex = None
         self.price = None
         self.collection_id = None
-        Clothes._all_clothes.append(self)  # Add each new instance to the class variable
+        self.collection_name = None
+        self.collection_start_date = None
+        self.collection_end_date = None
+        Clothes._all_clothes.append(self)
 
     @classmethod
     def print_all_clothes(cls):
         for clothes in cls._all_clothes:
             print(
                 f"ID: {clothes.clothes_id}, Material: {clothes.material}, Size: {clothes.size}, "
-                f"Sex: {clothes.sex}, Price: {clothes.price}, Collection ID: {clothes.collection_id}")
+                f"Sex: {clothes.sex}, Price: {clothes.price}, Collection: {clothes.collection_name}, "
+                f"Start Date: {clothes.collection_start_date}, End Date: {clothes.collection_end_date}")
 
     @classmethod
     def get_clothes_by_id(cls, clothes_id):
@@ -572,10 +555,21 @@ class Clothes:
     @classmethod
     def fetch_clothes_from_db(cls, db_connection):
         cls._all_clothes.clear()
-        db_connection.cursor.execute("SELECT clothes_id, material, size, sex, price, collection_id FROM Clothes")
+        query = """
+            SELECT c.clothes_id, c.material, c.size, c.sex, c.price, col.name, col.start_date, col.end_date 
+            FROM Clothes c
+            JOIN Collections col ON c.collection_id = col.collection_id
+            """
+        db_connection.cursor.execute(query)
         rows = db_connection.cursor.fetchall()
         for row in rows:
-            cls.create_clothes(row[0], row[1], row[2], row[3], row[4], row[5])  # Use cls.create_clothes here
+            cls.create_clothes_with_collection(row)  # Modified to handle collection details
+
+    @classmethod
+    def create_clothes_with_collection(cls, row):
+        clothes = cls()
+        clothes.clothes_id, clothes.material, clothes.size, clothes.sex, clothes.price, \
+            clothes.collection_name, clothes.collection_start_date, clothes.collection_end_date = row
 
     @classmethod
     def refresh_clothes(cls, db_connection):
@@ -593,76 +587,58 @@ class Clothes:
         return clothes
 
     @classmethod
-    def display_clothes_by_price(cls, db_connection):
-
-        sort_order = input("Enter sort order (asc/desc): ")
-
-        # Call the stored procedure
-        db_connection.cursor.callproc('DisplayProductsByPrice', [sort_order])
-
-        # Print the results
-        for result in db_connection.cursor.stored_results():
-            for row in result.fetchall():
-                print(row)
+    def print_sorted_by_price(cls, ascending=True):
+        sorted_clothes = sorted(cls._all_clothes, key=lambda x: x.price, reverse=not ascending)
+        for clothes in sorted_clothes:
+            print(
+                f"ID: {clothes.clothes_id}, Material: {clothes.material}, Size: {clothes.size}, "
+                f"Sex: {clothes.sex}, Price: {clothes.price}, Collection: {clothes.collection_name}, "
+                f"Start Date: {clothes.collection_start_date}, End Date: {clothes.collection_end_date}")
 
     @classmethod
-    def display_clothes_by_collection(cls, db_connection):
-        sort_order = input("Enter sort order (newest/oldest): ").lower()
+    def print_sorted_by_collection_date(cls, newest_first=True):
+        # Sort based on collection's start_date
+        sorted_clothes = sorted(cls._all_clothes, key=lambda x: x.collection_start_date, reverse=newest_first)
 
-        try:
-
-            if sort_order in ['newest', 'oldest']:
-                db_connection.cursor.callproc('DisplayProductsByCollection', [sort_order])
-
-                for result in db_connection.cursor.stored_results():
-                    for row in result.fetchall():
-                        print(row)
-            else:
-                print("Invalid sort order. Please use 'newest' or 'oldest'.")
-
-        except mysql.connector.Error as err:
-            print(f"Error: {err}")
-        finally:
-            print("display_clothes_by_collection success")
+        for clothes in sorted_clothes:
+            print(
+                f"ID: {clothes.clothes_id}, Material: {clothes.material}, Size: {clothes.size}, "
+                f"Sex: {clothes.sex}, Price: {clothes.price}, Collection: {clothes.collection_name}, "
+                f"Start Date: {clothes.collection_start_date}, End Date: {clothes.collection_end_date}")
 
     @classmethod
-    def search_products(cls, db_connection):
-        material = input("Enter material (or leave blank): ")
-        size = input("Enter size (or leave blank): ")
-        min_price = input("Enter minimum price (or leave blank): ")
-        max_price = input("Enter maximum price (or leave blank): ")
-        sex = input("Enter sex (male/female/unisex or leave blank): ")
+    def print_filtered_clothes(cls):
+        material = input("Enter material (or leave blank): ").strip().lower()
+        size = input("Enter size (or leave blank): ").strip().lower()
+        min_price = input("Enter minimum price (or leave blank): ").strip()
+        max_price = input("Enter maximum price (or leave blank): ").strip()
+        sex = input("Enter sex (male/female/unisex or leave blank): ").strip().lower()
 
-        # Convert empty strings to None
-        material = None if material == "" else material
-        size = None if size == "" else size
-        min_price = None if min_price == "" else float(min_price)
-        max_price = None if max_price == "" else float(max_price)
-        sex = None if sex == "" else sex
+        # Convert min_price and max_price to float, handle empty inputs
+        min_price = float(min_price) if min_price else None
+        max_price = float(max_price) if max_price else None
 
-        try:
-
-            db_connection.cursor.callproc('SearchProducts', [material, size, min_price, max_price, sex])
-
-            for result in db_connection.cursor.stored_results():
-                for row in result.fetchall():
-                    print(row)
-
-        except mysql.connector.Error as err:
-            print(f"Error: {err}")
-        finally:
-            print("search_products success")
+        for clothes in cls._all_clothes:
+            if (not material or clothes.material.lower() == material) and \
+                    (not size or clothes.size.lower() == size) and \
+                    (not sex or clothes.sex.lower() == sex) and \
+                    (min_price is None or clothes.price >= min_price) and \
+                    (max_price is None or clothes.price <= max_price):
+                print(
+                    f"ID: {clothes.clothes_id}, Material: {clothes.material}, Size: {clothes.size}, "
+                    f"Sex: {clothes.sex}, Price: {clothes.price}, Collection: {clothes.collection_name}, "
+                    f"Start Date: {clothes.collection_start_date}, End Date: {clothes.collection_end_date}")
 
 
 class Collection:
-    _all_collections = []  # Private class variable to hold all collections
+    _all_collections = []
 
     def __init__(self):
         self.collection_id = None
         self.name = None
         self.start_date = None
         self.end_date = None
-        Collection._all_collections.append(self)  # Add each new instance to the class
+        Collection._all_collections.append(self)
 
     @classmethod
     def print_all_collections(cls):
@@ -709,7 +685,7 @@ class UI_App:
     def login(self):
         user_login = ValidationUtility.get_validated_input_varchar("Enter login: ", 20)
         user_password = ValidationUtility.get_validated_input_varchar("Enter password: ", 20)
-        #  hashed_password = SecurityUtility.hash_password(user_password)
+        hashed_password = SecurityUtility.hash_password(user_password)
 
         try:
             self.db.cursor.execute("SELECT * FROM Users WHERE login = %s AND password = %s", (user_login,
@@ -741,14 +717,13 @@ class UI_App:
         user_phone = ValidationUtility.get_validated_input_varchar("Enter phone: ", 15)
         user_name = ValidationUtility.get_validated_input_varchar("Enter name: ", 45)
         user_surname = ValidationUtility.get_validated_input_varchar("Enter surname: ", 45)
-        user_role = ValidationUtility.get_validated_input_varchar("Enter role (admin, employee, customer): ", 20)
+        user_role = "customer"
+        # user_role = ValidationUtility.get_validated_input_varchar("Enter role (admin, employee, customer): ", 20)
 
-        # Ensure role is one of the accepted values
         if user_role not in ['admin', 'employee', 'customer']:
             print("Invalid role. Please enter 'admin', 'employee', or 'customer'.")
             return
 
-        # Call the database procedure
         try:
             self.db.cursor.callproc('CreateUserAccount',
                                     [user_login, hashed_password, user_email, user_phone, user_name, user_surname,
@@ -887,11 +862,16 @@ class UI_App:
             if choice == '1':
                 clothes.print_all_clothes()
             elif choice == '2':
-                clothes.display_clothes_by_price(self.db)
+                order = input("Enter 'asc' for ascending or 'desc' for descending order of price: ").strip().lower()
+                ascending = True if order == 'asc' else False
+                clothes.print_sorted_by_price(ascending)
             elif choice == '3':
-                clothes.display_clothes_by_collection(self.db)
+                order = input("Enter 'newest' for newest first or "
+                              "'oldest' for oldest first in collection date: ").strip().lower()
+                newest_first = True if order == 'newest' else False
+                clothes.print_sorted_by_collection_date(newest_first)
             elif choice == '4':
-                clothes.search_products(self.db)
+                clothes.print_filtered_clothes()
             elif choice == '5':
                 print("Exiting the program. Goodbye!")
                 break
@@ -903,7 +883,7 @@ class ValidationUtility:
 
     @staticmethod
     def validate_for_sql_injection(value):
-        # List of patterns that might indicate SQL injection
+
         patterns = [
             r'--',  # SQL comment
             r';',  # Statement separator
@@ -930,10 +910,9 @@ class ValidationUtility:
     @staticmethod
     def validate_integer(value, max_length):
         try:
-            # Convert the input to an integer
+
             int_value = int(value)
 
-            # Check if max_length is defined and if the length of the integer exceeds it
             if len(str(abs(int_value))) > max_length:
                 print(f"Integer value exceeds the max allowed length of {max_length} digits. Please try again.")
                 return False
@@ -946,18 +925,15 @@ class ValidationUtility:
     @staticmethod
     def validate_decimal(value):
         try:
-            # Convert the input to Decimal
+
             decimal_value = Decimal(value)
-            # Quantize to two decimal places
             decimal_value = decimal_value.quantize(Decimal('0.00'))
 
-            # Split the Decimal into parts
             sign, digits, exponent = decimal_value.as_tuple()
-            # Calculate the number of digits before and after the decimal
+
             digits_before_decimal = len(digits) + exponent if exponent < 0 else len(digits)
             digits_after_decimal = -exponent if exponent < 0 else 0
 
-            # Check if the number of digits is within the required limits
             if digits_before_decimal > 6 or digits_after_decimal > 2:
                 print(
                     "Value must be a decimal number with up to 6 digits before and 2 digits after the decimal point. "
@@ -993,11 +969,10 @@ class ValidationUtility:
 
 
 class SecurityUtility:
-    SECRET_SALT = b'ad'  # This should be a byte string
+    SECRET_SALT = b'ad'
 
     @staticmethod
     def hash_password(password):
-        # Hash the password with the secret salt
         hashed_password = hashlib.sha256(SecurityUtility.SECRET_SALT + password.encode()).hexdigest()
         return hashed_password
 
@@ -1013,4 +988,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
